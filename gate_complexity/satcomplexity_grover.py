@@ -82,6 +82,8 @@ def grover(n, m, k):
     # return [3.642 * sum(one_iteration[0]), 3.642 * sum(one_iteration[1])]
     #return [sqrt(2**n)*sum(one_iteration[0]),sqrt(2**n)*sum(one_iteration[1])]
 
+MULTI = 1
+
 # if len(sys.argv) == 4:
 #     MULTI = 1
 #     k, nmin, nmax = int(sys.argv[1]), int(sys.argv[2]), int(sys.argv[3])
