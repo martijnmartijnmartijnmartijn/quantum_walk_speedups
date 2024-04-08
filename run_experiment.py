@@ -2,59 +2,52 @@
 @author: Martijn Brehm (m.a.brehm@uva.nl)
 @date: 15/01/2024
 
-This script generates SAT instances, solves them, saves several interesting
-features computed during the solving, and then computes (upper-bounds on) the time and query complexity needed by several quantum algorihtm to solve that
-instance. The script requires input parameters
+This script generates SAT instances and solves them. If solved using a modern
+classical SAT solver, the running time is saved. If solved using a simple
+backtracking algorithm, features collected during the solving are used to
+compute (upper-bounds on) the time complexity of three different quantum
+algorithms: a quantum backtracking detection algorithm, quantum backtracking
+search algorithm and Grover's algorithm.
+
+Specifically, the script requires input parameters
 - k (integer)
 - n1 (integer)
 - n2 (integer)
+- stepsize (integer)
 - reps (integer)
-- mode (one of "random_sat" (default), "random_unsat", "community_sat", "community_unsat")
 - solver ("BT" (default) if the base backtracking solver should be used,
-          "CDCL" if the modern CDCL solver should be used)
-- paths (0 (default) if the paths should not be saved, 1 if they should be).
+          "CDCL" if the modern solver should be used)
+- mode ("random" (default) or "community")
 - beta (0 (default), 1)
 - T (1 (default))
+- paths (0 (default) if the paths should not be saved, 1 if they should be).
 
 The script then generates "k"-SAT instances from class "mode" in "n1" up
-to and including "n2" variables, "reps" for each number of variables. It solves these instances and then saves the following
-data into the file data/solver-mode-k-n1-n2-reps.csv (where "paths" is
-appeneded after reps and just before .csv if set to its non-default value):
+to and including "n2" variables, with steps of "stepsize" between each n. For each n, it generates "reps" satisfiable and "reps" unsatisfiable instances. It saves the following data into the file
+data/solver-k-sat-mode_beta_T-n1-n2-reps.csv for satisfiable instance, and the same for unsatisfiable instance but "sat" in changed to "unsat" (where "beta" and "T" are written only if the mode is "community"):
 - the number of variables
-- the index of the instance (i.e. between 0 and "reps")
-- the number of seconds the sat solver needed to solve this instance.
+- the number of seconds the classical solver needed to solve this instance.
+and if BT is used also saves:
 - the size of the backtracking tree.
 - the depth of the backtracking tree.
 - the number of satisfying assignments in the backtracking tree.
 - the total number of satisfying assignments.
 - the size of the backtracking tree upon finding the first solution.
 - the depth of the backtracking tree upon finding the first solution.
-- the number of queries needed by the detection algorithm given perfect upper-bound W and upper-bound R=n.
-- the number of queries needed by the detection algorithm given perfect upper-bound W and upper-bound R=1.
-- the number of queries needed by the binary search algorithm given perfect upper-bound W and upper-bound R=n
-- the number of queries needed by the binary search algorithm that estimates upper-bound W and is given upper-bound R=n.
+- time complexity of the quantum detection algorithm for this instance.
+- time complexity of the quantum binary search algorithm for this instance.
+- time complexity of Grover's algorithm for this instance.
 - if paths is set, all the paths are listed as bistrings, separated by commas.
-If the CDCL solver is used then only the first three values are saved.
 
-Example 1: the command "python3 run_experiment.py 3 10 40 50 random_sat"
+Example 1: the command "python3 run_experiment.py 3 10 40 50 BT random"
 generates 50 uniformly random satisfiable
-3-SAT instances in 10, 11, ..., 40 variables, solves them using the backtracking algorithm with the efficient predicate while not keeping the paths, and writes all the relevant data to "data/BT-random_sat_3-10-40-50.csv".
+3-SAT instances in 10, 11, ..., 40 variables, and the same for unsatisfiable instances. It solves them using the backtracking algorithm and writes all the relevant data to "data/BT-3-sat-random-10-40-50.csv" and
+"data/BT-3-unsat-random-10-40-50.csv".
 
-Example 2: "python3 run_experiment.py 3 10 40 50 random_sat BT 1"
-would do the same, except it would keep the paths and save the data to "data/BT-random_sat_3-10-40-50-paths.csv"
+Example 2: "python3 run_experiment.py 3 10 40 50 BT community 0.6 2"
+would do the same, except not generating random instances but instances iwth community where beta = 0.6 and T = 2. It saves the data to "data/BT-3-sat-community_0.6_2-10-40-50.csv" and "data/BT-3-sat-community_0.6_2-10-40-50.csv".
 
-Example 3: "python3 run_experiment.py 3 10 40 50 community_sat" would generate
-the same number of instances in the same number of variables as above, except
-it would generate satisfiable instances with community structure and save them
-to "data/BT-community_sat_3-10-40-50.csv"
-
-Example 4: "python3 run_experiment.py 3 10 40 50 random_unsat CDCL 0 0 " would
-generate the same number of instances in the same number of variables as above,
-but they would be uniformly random and unsatisfiable, but they are solved by a
-modern CDCL solver, and the data would be saved to
-"data/CDCL-random_unsat-10-40-50.csv"
-
-To plot the complexity of the classical and quantum algorithms on these instances, you can call python3 plot_queries_over_n.py with the data files generated by this script. For instance, we can use the files generated by examples 1 and 3 to compare the performance on random intances and instances with community structure: "python3 plot_queries_over_n.py data/BT-random_sat_3-10-40-50.csv data/BT-community_sat_3-10-40-50.csv"
+To plot the complexity of the classical and quantum algorithms on these instances, you can call python3 plot_queries_over_n.py with the data files generated by this script. For instance, we can use the files generated by the above examples to compare the performance of the quantum algorithms on satisfiable random intances and satisfiable instances with community structure: "python3 plot_queries_over_n.py data/BT-3-sat-random-10-40-50.csv data/BT-3-sat-com_0.6_2-10-40-50.csv"
 """
 from sys import argv
 from math import ceil, sqrt, log
@@ -65,6 +58,11 @@ from subprocess import check_output
 from pysat.solvers import Solver
 from pysat.formula import CNF
 from sympy import binomial
+from gate_complexity.satcomplexity import bt
+from gate_complexity.satcomplexity_grover import grover
+
+# Round number to 6 significant digits.
+round_6 = lambda number : float("{0:.5e}".format(number)) if len(str(number)) > 6 else str(number)
 
 def dpll(path, k=3, paths=False):
     """
@@ -159,16 +157,19 @@ def q_grover(L, t):
 ratios = (4.267,9.931,21.117,43.37,87.79,176.54,354.01,708.92,1418.71,2838.28,
           5677.41,11355.67,22712.20)
 
+# Three regimes for the time per gate.
+regimes = (50e-9, 5e-9, 0.5e-9)
+t = regimes[1]
+
 # Indices into data from .csv files.
 N_VARS = 0
-REP = 1
-TIME = 2
-SIZE = 3
-DEPTH = 4
-N_SOLUTIONS = 5
-N_SOLUTIONS_TOTAL = 6
-FIRST_SOL_SIZE = 7
-FIRST_SOL_DEPTH = 8
+TIME = 1
+SIZE = 2
+DEPTH = 3
+N_SOLUTIONS = 4
+N_SOLUTIONS_TOTAL = 5
+SOL_1_SIZE = 6
+SOL_1_DEPTH = 7
 
 # Constants used throughout calculations.
 DELTA = 0.001
@@ -179,69 +180,79 @@ n_reps = 23
 k = int(argv[1])
 n1 = int(argv[2])
 n2 = int(argv[3])
-reps = int(argv[4])
-mode = argv[5] if len(argv) > 5 else "random_sat"
+stepsize = int(argv[4])
+reps = int(argv[5])
 solver = argv[6] if len(argv) > 6 else "BT"
-paths = int(argv[7]) if len(argv) > 7 else False
+mode = argv[7] if len(argv) > 7 else "random"
 beta = argv[8] if len(argv) > 8 else 0
 T = argv[9] if len(argv) > 9 else 1
+paths = int(argv[10]) if len(argv) > 10 else False
 
-# Set-up the file that we write the solutions to.
-append_to_end = "-paths" if paths else ""
-temp = mode + "_" + str(beta) + "_" + str(T) if "community" in mode else mode
-filename = "data/" + solver + "-" + temp + "-" + str(k) + "-" + str(n1) + "-" + str(n2) + "-" + str(reps) + append_to_end + ".csv"
-outfile = open(filename, "w", newline='')
-csvwriter = writer(outfile, delimiter=',')
-csvwriter.writerow(["n", "repetition", "CPU_time_s", "nodes", "depth", "n_solutions_tree", "n_total_solutions", "nodes_first_solution", "depth_first_solution", "q_detect_opt_W_R=n", "q_detect_opt_W_R=1", "q_binary_search_opt_W_R=n", "q_binary_search_est_W_R=n"])
+# Set-up the files that we write data to.
+mode = "community_" + str(beta) + "_" + str(T) if mode == "community" else "random"
+end = "-paths" if paths else ""
+end = mode + "-" + str(n1) + "-" + str(n2) + "-" + str(stepsize) + "-" + str(reps) + end + ".csv"
+file_sat = "data/" + solver + "-" + str(k) + "-sat-" + end
+file_unsat = "data/" + solver + "-" + str(k) + "-unsat-" + end
+print("Saving data to files:\n{}\n{}".format(file_sat, file_unsat))
+file_sat = open(file_sat, "w", newline='')
+writer_sat = writer(file_sat, delimiter=',')
+file_unsat = open(file_unsat, "w", newline='')
+writer_unsat = writer(file_unsat, delimiter=',')
+
+# Write initial line to files.
+first_line = ["n", "time", "nodes", "depth", "n_solutions_tree", "n_total_solutions", "nodes_first_solution", "depth_first_solution", "time_detect", "time_binary_search", "time_grover"]
+writer_sat.writerow(first_line)
+writer_unsat.writerow(first_line)
 
 # For all number of variables and repetitions:
-for n in range(n1, n2+1):
+for n in range(n1, n2 + 1, stepsize):
     print("n={}: ".format(n), end='')
     m = int(ceil(ratios[k-3] * n))
-    total_generated = 0
-    sat_count = 0
-    r = 0
+    total_generated, sat_count = 0, 0
+    r_sat, r_unsat = 0, 0
 
     # Generate instance according to specified generation mode.
-    while r < reps:
+    while r_sat < reps or r_unsat < reps:
         if "community" in mode:
-            formula = check_output(["./generators-IJCAI17/psc3.1", "-n " + str(n), "-m " + str(m), "-K " + str(k), "-T " + str(T), "-b " + str(beta), "-s " + str(randint(0,100000))], encoding="utf8")
+            formula = check_output(["./generators-IJCAI17/psc3.1", "-n " +
+               str(n), "-m " + str(m), "-K " + str(k), "-T " + str(T), "-b " +
+               str(beta), "-s " + str(randint(0,100000))], encoding="utf8")
         elif "random" in mode:
             formula = RandomKCNF(k, n, m).to_dimacs()
-
-        # Solve instance according to specified solver.
         tempfile = open("temp.dimacs", "w")
         tempfile.write(formula)
         tempfile.close()
-        output = [n, r]
-        if solver == "BT":
-            output += dpll("temp.dimacs", k=k, paths=paths)
-            solve = output[N_SOLUTIONS] > 0
-            sol_depth = output[FIRST_SOL_DEPTH] if output[FIRST_SOL_DEPTH] > 0 else n
-            output += [q_bt(C, n_reps, n, output[SIZE]),
-                q_bt(C, n_reps, 1, output[SIZE]),
-                q_bt_b_search(C, n_reps, n, output[SIZE], n, sol_depth),
-                q_bt_b_search_est_W(C, n_reps, n, output[SIZE], n),
-                q_grover(2**n, output[N_SOLUTIONS_TOTAL])]
 
+        # Solve instance according to specified solver.
+        data = [n]
+        if solver == "BT":
+            data += dpll("temp.dimacs", k=k, paths=paths)
+            solve = data[N_SOLUTIONS] > 0
+            sol_depth = data[SOL_1_DEPTH] if data[SOL_1_DEPTH] > 0 else n
+            bt_gate_depth = bt(n, m, k, data[SIZE])[0]
+            data += [
+    round_6(q_bt(C, n_reps, n, data[SIZE]) * bt_gate_depth * t),
+    round_6(q_bt_b_search_est_W(C, n_reps, n, data[SIZE], n) * bt_gate_depth * t),
+    round_6(q_grover(2**n, data[N_SOLUTIONS_TOTAL]) * grover(n, m, k)[0] * t)
+                # q_bt(C, n_reps, 1, data[SIZE]),
+                # q_bt_b_search(C, n_reps, n, data[SIZE], n, sol_depth),
+            ]
         elif solver == "CDCL":
             s = Solver(bootstrap_with=CNF(from_string=formula), use_timer=True)
             solve = s.solve()
-            stats = s.accum_stats()
-            output += [s.time_accum(), stats["decisions"]+stats["propagations"]]
+            data.append(round_6(s.time_accum()))
+        # Save to sat/unsat file depending on if the instance was satisfiable.
+        if solve and r_sat < reps:
+            writer_sat.writerow(data)
+            r_sat += 1
+        elif not solve and r_unsat < reps:
+            writer_unsat.writerow(data)
+            r_unsat += 1
 
-        # These two counters are just for my understanding of community struc.
+        # Keep track of what fraction of generated instances was satisfiable.
         total_generated += 1
         sat_count = sat_count + 1 if solve else sat_count
-
-        # Checks if the random instance was of the correct type.
-        if ("unsat" in mode and solve) or ("_sat" in mode and not solve):
-            continue
-        csvwriter.writerow(output)
-        r += 1
-
-    # Also print is just for m.e
-    print("  fraction satisfiable: {} ({}/{})".format(sat_count/total_generated, sat_count, total_generated))
-
-outfile.close()
-print("\nSaved data to {}".format(filename))
+    print("  Fraction satisfiable: {} ({}/{})".format(sat_count/total_generated, sat_count, total_generated))
+file_sat.close()
+file_unsat.close()
