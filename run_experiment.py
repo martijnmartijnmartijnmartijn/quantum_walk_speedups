@@ -20,11 +20,14 @@ Specifically, the script requires input parameters
 - mode ("random" (default) or "community")
 - beta (0 (default), 1)
 - T (1 (default))
-- paths (0 (default) if the paths should not be saved, 1 if they should be).
 
 The script then generates "k"-SAT instances from class "mode" in "n1" up
-to and including "n2" variables, with steps of "stepsize" between each n. For each n, it generates "reps" satisfiable and "reps" unsatisfiable instances. It saves the following data into the file
-data/solver-k-sat-mode_beta_T-n1-n2-reps.csv for satisfiable instance, and the same for unsatisfiable instance but "sat" in changed to "unsat" (where "beta" and "T" are written only if the mode is "community"):
+to and including "n2" variables, with steps of "stepsize" between each n. For
+each n, it generates "reps" satisfiable and "reps" unsatisfiable instances. It
+saves the following data into the file
+data/solver-k-sat-mode_beta_T-n1-n2-reps.csv for satisfiable instance, and the
+same for unsatisfiable instance but "sat" in changed to "unsat" (where "beta"
+and "T" are written only if the mode is "community"):
 - the number of variables
 - the number of seconds the classical solver needed to solve this instance.
 and if BT is used also saves:
@@ -34,10 +37,9 @@ and if BT is used also saves:
 - the total number of satisfying assignments.
 - the size of the backtracking tree upon finding the first solution.
 - the depth of the backtracking tree upon finding the first solution.
-- time complexity of the quantum detection algorithm for this instance.
-- time complexity of the quantum binary search algorithm for this instance.
-- time complexity of Grover's algorithm for this instance.
-- if paths is set, all the paths are listed as bistrings, separated by commas.
+- query complexity, t-depth and t-count of quantum detection algorithm.
+- query complexity, t-depth and t-count of quantum search algorithm.
+- query complexity, t-depth and t-count of Grover's algorithm.
 
 Example 1: the command "python3 run_experiment.py 3 10 40 50 BT random"
 generates 50 uniformly random satisfiable
@@ -55,49 +57,17 @@ from random import randint
 from csv import reader, writer
 from cnfgen.families.randomformulas import RandomKCNF as RandomKCNF
 from subprocess import check_output
-from pysat.solvers import Solver
-from pysat.formula import CNF
-from sympy import binomial
+from time import time
+from os import remove
+
 from gate_complexity.satcomplexity import bt
 from gate_complexity.satcomplexity_grover import grover
 
+# Terminate sat solver after taking this long.
+TIMEOUT = 5 * 60
+
 # Round number to 6 significant digits.
-round_6 = lambda number : float("{0:.5e}".format(number)) if len(str(number)) > 6 else str(number)
-
-def dpll(path, k=3, paths=False):
-    """
-    Takes a SAT instance encoded in the dimacs file at "path" and solves it
-    using a the sat solver in the program cpp_solver (or cpp_solver_no_paths
-    if paths is set to False).
-
-    We simply pass on the list of values output by this program, which are:
-    - the size of the backtracking tree.
-    - the depth of the backtracking tree.
-    - the number of satisfying assignments in the backtracking tree.
-    - the total number of satisfying assignments.
-    - the size of the backtracking tree upon finding the first solution.
-    - the depth of the backtracking tree upon finding the first solution.
-    - the number of seconds the sat solver needed to solve this instance.
-    - a list of bitstrings denoting the paths to each of the satisfying
-     assignments, i.e. 001 means the first variable was set to F, the second
-     to F and the third to T.
-
-     The paths are including only if "paths" is set to True. These are output
-     first by the sat solver program, with each bitstring on a separate line.
-     The other values then follow on the last line, separated by comma's.
-
-     Example:
-        dpll("uf50-218/uf50-01.cnf")
-        print_solution(dpll("uf50-218/uf50-01.cnf"))
-    """
-    command = "./solvers/solver"
-    if paths:
-        command += "_print_paths"
-    output = check_output([command, "{}".format(path), str(k)], encoding="utf8").split('\n')
-    result = [int(float(val)) for val in output[-1].split(',')]
-    if paths:
-        result += [output[:-1]]
-    return result
+r = lambda number : float("{0:.5e}".format(number)) if len(str(number)) > 6 else str(number)
 
 def get_n_reps(ep, r):
     """
@@ -153,22 +123,16 @@ def q_grover(L, t):
     F = 2.0344 if L/4 <= t else 9/4 * L/sqrt((L - t)*t) + ceil(log(L/sqrt((L - t)*t), 6/5)) - 3
     return F * (1 + 1/(1 - F/(9.2 * sqrt(L))))
 
-# The ratio clauses/variables where a phase transition occurs for uniformly random 3-SAT, 4-SAT, ..., 13-SAT instances.
+# Clauses/variables ratios of phase transition point for 3-SAT, ..., 13-SAT.
 ratios = (4.267,9.931,21.117,43.37,87.79,176.54,354.01,708.92,1418.71,2838.28,
           5677.41,11355.67,22712.20)
-
-# Three regimes for the time per gate.
-regimes = (50e-9, 5e-9, 0.5e-9)
-t = regimes[1]
 
 # Indices into data from .csv files.
 N_VARS = 0
 TIME = 1
 SIZE = 2
-DEPTH = 3
 N_SOLUTIONS = 4
 N_SOLUTIONS_TOTAL = 5
-SOL_1_SIZE = 6
 SOL_1_DEPTH = 7
 
 # Constants used throughout calculations.
@@ -186,12 +150,10 @@ solver = argv[6] if len(argv) > 6 else "BT"
 mode = argv[7] if len(argv) > 7 else "random"
 beta = argv[8] if len(argv) > 8 else 0
 T = argv[9] if len(argv) > 9 else 1
-paths = int(argv[10]) if len(argv) > 10 else False
 
 # Set-up the files that we write data to.
 mode = "community_" + str(beta) + "_" + str(T) if mode == "community" else "random"
-end = "-paths" if paths else ""
-end = mode + "-" + str(n1) + "-" + str(n2) + "-" + str(stepsize) + "-" + str(reps) + end + ".csv"
+end = mode + "-" + str(n1) + "-" + str(n2) + "-" + str(stepsize) + "-" + str(reps) + ".csv"
 file_sat = "data/" + solver + "-" + str(k) + "-sat-" + end
 file_unsat = "data/" + solver + "-" + str(k) + "-unsat-" + end
 print("Saving data to files:\n{}\n{}".format(file_sat, file_unsat))
@@ -205,8 +167,15 @@ first_line = ["n", "time", "nodes", "depth", "n_solutions_tree", "n_total_soluti
 writer_sat.writerow(first_line)
 writer_unsat.writerow(first_line)
 
-# For all number of variables and repetitions:
+# Stop if the previous iteration took too long.
+prev_time = time()
+prev_iter_time = 0
 for n in range(n1, n2 + 1, stepsize):
+    if prev_iter_time > TIMEOUT:
+        print("Timeout: last iter took longer than alotted time of {}s".format(TIMEOUT))
+        break
+    prev_time = time()
+
     print("n={}: ".format(n), end='')
     m = int(ceil(ratios[k-3] * n))
     total_generated, sat_count = 0, 0
@@ -220,28 +189,41 @@ for n in range(n1, n2 + 1, stepsize):
                str(beta), "-s " + str(randint(0,100000))], encoding="utf8")
         elif "random" in mode:
             formula = RandomKCNF(k, n, m).to_dimacs()
-        tempfile = open("temp.dimacs", "w")
-        tempfile.write(formula)
-        tempfile.close()
+        tempfile = "{}.dimacs".format(randint(0,100000))
+        temp = open(tempfile, "w")
+        temp.write(formula)
+        temp.close()
+
 
         # Solve instance according to specified solver.
         data = [n]
-        if solver == "BT":
-            data += dpll("temp.dimacs", k=k, paths=paths)
+        if solver == "CDCL":
+            start = time()
+            output = check_output(["./solvers/SBVA/sbva_wrapped",
+                "solvers/CaDiCaL/build/cadical", tempfile, "h"], encoding="utf8", timeout=TIMEOUT)
+            data.append(r(time() - start))
+            solve = " SATISFIABLE" in output
+        elif solver == "BT":
+            output = check_output(["./solvers/bt/solver", tempfile, str(k)],
+                encoding="utf8", timeout=TIMEOUT).split(',')
+            data += [float(output[0])]
+            data += [int(val) for val in output[1:]]
             solve = data[N_SOLUTIONS] > 0
             sol_depth = data[SOL_1_DEPTH] if data[SOL_1_DEPTH] > 0 else n
-            bt_gate_depth = bt(n, m, k, data[SIZE])[0]
-            data += [
-    round_6(q_bt(C, n_reps, n, data[SIZE]) * bt_gate_depth * t),
-    round_6(q_bt_b_search_est_W(C, n_reps, n, data[SIZE], n) * bt_gate_depth * t),
-    round_6(q_grover(2**n, data[N_SOLUTIONS_TOTAL]) * grover(n, m, k)[0] * t)
-                # q_bt(C, n_reps, 1, data[SIZE]),
-                # q_bt_b_search(C, n_reps, n, data[SIZE], n, sol_depth),
-            ]
-        elif solver == "CDCL":
-            s = Solver(bootstrap_with=CNF(from_string=formula), use_timer=True)
-            solve = s.solve()
-            data.append(round_6(s.time_accum()))
+
+            # Add q backtracking alg query complexity, t depth and t count.
+            bt_t_depth, bt_t_count = bt(n, m, k, data[SIZE])
+            data += [q_bt(C, n_reps, n, data[SIZE])]
+            data += [data[-1] * bt_t_depth, data[-1] * bt_t_count]
+            data += [q_bt_b_search_est_W(C, n_reps, n, data[SIZE], n)]
+            data += [data[-1] * bt_t_depth, data[-1] * bt_t_count]
+
+            # Add grover query complexity, t depth and t count.
+            grover_t_depth, grover_t_count = grover(n, m, k)
+            data += [q_grover(2**n, data[N_SOLUTIONS_TOTAL])]
+            data += [data[-1] * grover_t_depth, data[-1] * grover_t_count]
+        remove(tempfile)
+
         # Save to sat/unsat file depending on if the instance was satisfiable.
         if solve and r_sat < reps:
             writer_sat.writerow(data)
@@ -253,6 +235,8 @@ for n in range(n1, n2 + 1, stepsize):
         # Keep track of what fraction of generated instances was satisfiable.
         total_generated += 1
         sat_count = sat_count + 1 if solve else sat_count
-    print("  Fraction satisfiable: {} ({}/{})".format(sat_count/total_generated, sat_count, total_generated))
+    prev_iter_time = time() - prev_time
+    print("  Took {}s ({}m)  Fraction satisfiable: {} ({}/{})".format(round(prev_iter_time,2), round(prev_iter_time/60,2), round(sat_count/total_generated,2), sat_count, total_generated))
+
 file_sat.close()
 file_unsat.close()

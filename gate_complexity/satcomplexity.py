@@ -275,9 +275,9 @@ def bt(n, m, k, t, controls=1):
     parallel_reps = 79
 
     #print("T-count of BT op: ", format_exp(ra_params[1]+rb_params[1]))
-    return [ra_params[0]+rb_params[0],
-            ra_params[1]+rb_params[1],
-            ra_params[2]+rb_params[2]]
+    return [ra_params[0]+rb_params[0], # t-depth
+            ra_params[1]+rb_params[1] + # toffoli-count
+            ra_params[2]+rb_params[2]] # T-count
     # return [reps * (ra_params[0]+rb_params[0]),
     #         parallel_reps * reps * (ra_params[1]+rb_params[1]),
     #         parallel_reps * reps * (ra_params[2]+rb_params[2])]
